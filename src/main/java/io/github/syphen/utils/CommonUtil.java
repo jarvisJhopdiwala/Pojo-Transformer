@@ -13,12 +13,12 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import lombok.experimental.UtilityClass;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-@UtilityClass
 public class CommonUtil {
+
+  private CommonUtil() {}
 
   private static final Logger log = LoggerFactory.getLogger(CommonUtil.class);
 
@@ -58,7 +58,7 @@ public class CommonUtil {
     return null;
   }
 
-  public boolean isCollectionType(Class<?> clazz) {
+  public static boolean isCollectionType(Class<?> clazz) {
     return clazz != null && Collection.class.isAssignableFrom(clazz);
   }
 

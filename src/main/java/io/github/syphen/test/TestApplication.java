@@ -44,6 +44,7 @@ public class TestApplication {
         .nodeContext(NodeContext.builder().fieldName("root")
             .transformAllFields(true)
             .transformFields(new NodeContext[]{
+                NodeContext.builder().fieldName("listList").transformAllFields(true).build(),
                 NodeContext.builder().fieldName("random1").transformAllFields(true).build(),
                 NodeContext.builder().fieldName("random1Set").transformAllFields(true).build(),
                 NodeContext.builder().fieldName("random1List").transformAllFields(true).build()})
@@ -77,6 +78,6 @@ public class TestApplication {
     private Set<Random1> random1Set;
     private Map<String, Random1> random1Map;
     private List<Random1> random1List;
+    private List<List<String>> listList;
   }
-
 }

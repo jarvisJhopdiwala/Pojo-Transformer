@@ -15,9 +15,10 @@ import io.github.syphen.factory.ProcessorSelector;
 import io.github.syphen.factory.StrategySelector;
 import io.github.syphen.operator.BaseOperator;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentMap;
+import java.util.stream.Collectors;
 import lombok.Getter;
 import org.reflections.Reflections;
 import org.reflections.scanners.Scanners;
@@ -26,6 +27,11 @@ import org.reflections.util.ConfigurationBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+/**
+ * Factory class responsible for initializing and configuring the {@link Transformer}. It discovers
+ * custom operators annotated with {@link RegisterOperator}, and builds all internal components such
+ * as strategies and processors.
+ */
 @Getter
 public class TransformerFactory {
 
@@ -33,14 +39,26 @@ public class TransformerFactory {
 
   private final Transformer transformer;
 
+
+  /**
+   * Initializes the Transformer using full classpath scan.
+   */
   public TransformerFactory() {
     this.transformer = this.initialize();
   }
 
+  /**
+   * Initializes the Transformer with restricted package scanning.
+   *
+   * @param pkgs list of package names to scan for @RegisterOperator annotations
+   */
   public TransformerFactory(String... pkgs) {
     this.transformer = this.initialize(pkgs);
   }
 
+  /**
+   * Core initializer for setting up the transformer pipeline.
+   */
   private Transformer initialize(String... pkgs) {
     PojoSchemaCache pojoSchemaCache = new PojoSchemaCache();
     OperatorRegistry operatorRegistry = new OperatorRegistry(discoverOperators(pkgs));
@@ -63,10 +81,17 @@ public class TransformerFactory {
     return new Transformer(nodeTransformer);
   }
 
+  /**
+   * Scans the provided packages or classpath for classes annotated with {@link RegisterOperator},
+   * validates and instantiates them.
+   *
+   * @param pkgs packages to scan
+   * @return map of operator key to instantiated {@link BaseOperator}
+   */
   private Map<String, BaseOperator> discoverOperators(String... pkgs) {
     try {
-      ConfigurationBuilder configurationBuilder = new ConfigurationBuilder();
-      configurationBuilder.setScanners(Scanners.TypesAnnotated);
+      ConfigurationBuilder configurationBuilder = new ConfigurationBuilder().setScanners(
+          Scanners.TypesAnnotated);
       if (pkgs == null || pkgs.length == 0) {
         configurationBuilder.addUrls(ClasspathHelper.forJavaClassPath());
         configurationBuilder.addUrls(ClasspathHelper.forClassLoader());
@@ -84,44 +109,48 @@ public class TransformerFactory {
     }
   }
 
+  /**
+   * Processes discovered operator classes, validates each one, and instantiates them. Performs
+   * parallel instantiation using {@code parallelStream}.
+   *
+   * @param classes set of annotated operator classes
+   * @return unmodifiable map of operator key to instantiated operator
+   */
   private Map<String, BaseOperator> processDiscoveredClasses(Set<Class<?>> classes) {
-    Map<String, BaseOperator> operatorMap = new HashMap<>();
-    for (Class<?> clazz : classes) {
-      // Validate class implements BaseOperator
-      if (!BaseOperator.class.isAssignableFrom(clazz)) {
-        log.error("Class {} with @RegisterOperator doesn't implement BaseOperator",
-            clazz.getName());
-        throw DataTransformationException.error(ErrorCode.WRONG_ANNOTATION_ERROR,
-            Map.of("detailMessage", "Class " + clazz.getName()
-                + " with @RegisterOperator doesn't implement BaseOperator"));
-      }
 
-      // Get and validate operator key
-      String key = clazz.getAnnotation(RegisterOperator.class).value();
-      if (key == null || key.trim().isEmpty()) {
-        log.error("Operator type cannot be null or empty for class {}", clazz.getName());
-        throw DataTransformationException.error(ErrorCode.OPERATOR_KEY_NULL_OR_EMPTY_ERROR,
-            Map.of("detailMessage",
-                "Operator type cannot be null or empty for class " + clazz.getName()));
-      }
+    try {
+      ConcurrentMap<String, BaseOperator> operatorMap = classes.parallelStream().map(clazz -> {
+        // Ensure class implements BaseOperator
+        if (!BaseOperator.class.isAssignableFrom(clazz)) {
+          throw DataTransformationException.error(ErrorCode.WRONG_ANNOTATION_ERROR,
+              Map.of("detailMessage", "Class " + clazz.getName()
+                  + " with @RegisterOperator doesn't implement BaseOperator"));
+        }
 
-      // Check for duplicate
-      if (operatorMap.containsKey(key)) {
-        log.error("Duplicate operator key found: {} (class: {})", key, clazz.getName());
+        // Extract annotation key
+        String key = clazz.getAnnotation(RegisterOperator.class).value();
+        if (key == null || key.trim().isEmpty()) {
+          throw DataTransformationException.error(ErrorCode.OPERATOR_KEY_NULL_OR_EMPTY_ERROR,
+              Map.of("detailMessage", "Operator key missing on class: " + clazz.getName()));
+        }
+
+        try {
+          BaseOperator instance = (BaseOperator) clazz.getDeclaredConstructor().newInstance();
+          log.info("Registered operator: {} with key: {}", clazz.getName(), key);
+          return Map.entry(key, instance);
+        } catch (Exception e) {
+          throw DataTransformationException.propagate(ErrorCode.INITIALIZATION_OPERATOR_ERROR,
+              new Throwable("Failed to instantiate: " + clazz.getName(), e));
+        }
+      }).collect(Collectors.toConcurrentMap(Map.Entry::getKey, Map.Entry::getValue, (a, b) -> {
         throw DataTransformationException.error(ErrorCode.DUPLICATE_OPERATOR_KEY_ERROR,
-            Map.of("detailMessage", "Duplicate operator key found: " + key));
-      }
+            Map.of("detailMessage", "Duplicate operator key found: " + a));
+      }));
 
-      // Instantiate operator
-      try {
-        operatorMap.put(key, (BaseOperator) clazz.getDeclaredConstructor().newInstance());
-        log.info("Registered operator: {} with key: {}", clazz.getName(), key);
-      } catch (Exception e) {
-        log.error("Failed to instantiate operator: {}", clazz.getName(), e);
-        throw DataTransformationException.propagate(ErrorCode.INITIALIZATION_OPERATOR_ERROR,
-            new Throwable("Failed to instantiate: " + clazz.getName(), e));
-      }
+      return Collections.unmodifiableMap(operatorMap);
+    } catch (Exception e) {
+      log.error("Failed to process discovered operator classes", e);
+      throw e;
     }
-    return Collections.unmodifiableMap(operatorMap);
   }
 }

@@ -17,12 +17,27 @@ import java.util.HashMap;
 import java.util.Map;
 import lombok.AllArgsConstructor;
 
+
+/**
+ * Processor implementation for transforming JSON objects based on field-level transformation logic.
+ * Delegates field-specific transformations to a {@link FieldProcessor} by determining the context
+ * from the {@link TransformationContext}.
+ */
 @AllArgsConstructor
 public class JsonObjectProcessor implements JsonProcessor {
 
   private FieldProcessor fieldProcessor;
   private PojoSchemaCache pojoSchemaCache;
 
+  /**
+   * Transforms an object node by applying transformation logic to individual fields.
+   *
+   * @param node                   the JSON object node to be transformed
+   * @param pojoClass              the original class used to derive field schema
+   * @param transformationContext context containing field transformation rules
+   * @param <T>                    the type of JsonNode; must be an ObjectNode
+   * @throws DataTransformationException if field is missing in schema or node type is incorrect
+   */
   public <T extends JsonNode> void transform(T node, Class<?> pojoClass,
       TransformationContext transformationContext) {
     final Map<String, TransformationContext> fieldSpecificContexts = buildFieldOperationMap(
@@ -41,6 +56,19 @@ public class JsonObjectProcessor implements JsonProcessor {
     }
   }
 
+  /**
+   * Builds a map of field names to their specific {@link TransformationContext} by analyzing
+   * the {@link NodeContext} inside the provided transformation context.
+   *
+   * <p>This method accounts for:
+   * - All fields transform mode
+   * - Specific transform fields
+   * - Skipped fields</p>
+   *
+   * @param transformationContext the context with transformation rules
+   * @param pojoClass             class used to reflect field names
+   * @return a map of field name to transformation context
+   */
   private Map<String, TransformationContext> buildFieldOperationMap(
       TransformationContext transformationContext, Class<?> pojoClass) {
     if (CommonUtil.nonValidNodeContext(transformationContext)) {
